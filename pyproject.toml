@@ -1,0 +1,32 @@
+[project]
+name = "qemu-hyperv-testing"
+version = "0.1.0"
+description = "CLI tooling for provisioning Linux VMs on Windows with QEMU and WHPX"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.12,<1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<9.0",
+]
+
+[project.scripts]
+qhv = "qhv.cli:app"
+
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/qhv"]
+
+[tool.pytest.ini_options]
+addopts = "--basetemp=.pytest_tmp -p no:cacheprovider"
+markers = [
+    "vm: launches a real lightweight VM and tears it down",
+]
+testpaths = ["tests"]
+pythonpath = ["src"]

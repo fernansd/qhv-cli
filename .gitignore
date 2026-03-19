@@ -1,0 +1,10 @@
+.qhv/
+.pytest_tmp/
+.pytest_cache/
+.uv-cache/
+.venv/
+__pycache__/
+*.py[cod]
+
+integration-runtime/
+integration-repro/
