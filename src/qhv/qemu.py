@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 import os
 import shlex
 import signal
@@ -24,6 +25,48 @@ def parse_port_forward(value: str) -> tuple[int, int]:
     return int(host), int(guest)
 
 
+def ssh_known_hosts_sink() -> str:
+    return "NUL" if os.name == "nt" else "/dev/null"
+
+
+def normalize_qemu_path(path: Path) -> str:
+    return str(path.resolve()).replace("\\", "/")
+
+
+def is_tcp_port_available(port: int, bind_host: str = "0.0.0.0") -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+            if exclusive is not None:
+                sock.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+            sock.bind((bind_host, port))
+        except OSError:
+            return False
+    return True
+
+
+def find_available_tcp_port(
+    start_port: int,
+    reserved_ports: set[int] | None = None,
+    bind_host: str = "0.0.0.0",
+) -> int:
+    reserved = reserved_ports or set()
+    for port in range(start_port, 65536):
+        if port in reserved:
+            continue
+        if is_tcp_port_available(port, bind_host=bind_host):
+            return port
+    raise RuntimeError(f"No free TCP ports are available from {start_port} onward.")
+
+
+def is_tcp_endpoint_reachable(host: str, port: int, timeout_seconds: float = 1.0) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout_seconds):
+            return True
+    except OSError:
+        return False
+
+
 class QemuRunner:
     def __init__(
         self,
@@ -38,11 +81,29 @@ class QemuRunner:
         self.startup_poll_interval_seconds = startup_poll_interval_seconds
 
     def _seed_drive_arg(self, seed_dir: Path) -> str:
-        normalized = str(seed_dir.resolve()).replace("\\", "/")
+        normalized = normalize_qemu_path(seed_dir)
         return (
             f"file.driver=vvfat,file.dir={normalized},file.label=cidata,"
             "file.floppy=on"
         )
+
+    def _serial_args(self, record: VmRecord) -> list[str]:
+        log_path = normalize_qemu_path(record.log_path)
+        if record.serial_mode == "socket" and record.serial_socket_port is not None:
+            chardev_id = "serial0"
+            return [
+                "-chardev",
+                (
+                    f"socket,id={chardev_id},host=127.0.0.1,port={record.serial_socket_port},"
+                    f"server=on,wait=off,logfile={log_path},logappend=on"
+                ),
+                "-serial",
+                f"chardev:{chardev_id}",
+            ]
+        return [
+            "-serial",
+            f"file:{log_path}",
+        ]
 
     def build_command(self, record: VmRecord) -> list[str]:
         spec = record.spec
@@ -66,8 +127,7 @@ class QemuRunner:
             spec.name,
             "-display",
             "none",
-            "-serial",
-            f"file:{record.log_path}",
+            *self._serial_args(record),
             "-device",
             "virtio-net-pci,netdev=net0",
             "-netdev",
@@ -125,11 +185,15 @@ class QemuRunner:
         except OSError:
             return False
 
-    def start(self, record: VmRecord) -> int | None:
+    def start(self, record: VmRecord, progress: Callable[[str], None] | None = None) -> int | None:
+        record.vm_dir.mkdir(parents=True, exist_ok=True)
+        record.log_path.parent.mkdir(parents=True, exist_ok=True)
         command = self.build_command(record)
         stderr_path = record.vm_dir / "qemu.stderr.log"
         stderr_handle = stderr_path.open("ab")
         try:
+            if progress is not None:
+                progress(f"Starting QEMU for VM '{record.name}'...")
             process = subprocess.Popen(
                 command,
                 stdout=subprocess.DEVNULL,
@@ -137,6 +201,8 @@ class QemuRunner:
                 creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW if os.name == "nt" else 0,
                 stdin=subprocess.DEVNULL,
             )
+            if progress is not None:
+                progress(f"Waiting for SSH on localhost:{record.spec.ssh_port}...")
             deadline = time.monotonic() + self.startup_timeout_seconds
             while time.monotonic() < deadline:
                 stderr_handle.flush()
@@ -156,13 +222,20 @@ class QemuRunner:
                 record,
                 stderr_path,
             )
-            return process.pid
         finally:
             stderr_handle.close()
 
     def ssh_command(self, spec: VmSpec) -> list[str]:
         return [
             "ssh",
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            f"UserKnownHostsFile={ssh_known_hosts_sink()}",
+            "-o",
+            f"GlobalKnownHostsFile={ssh_known_hosts_sink()}",
+            "-o",
+            "LogLevel=ERROR",
             f"{spec.username}@127.0.0.1",
             "-p",
             str(spec.ssh_port),
@@ -203,5 +276,3 @@ def terminate_pid(pid: int | None) -> None:
 
 def format_command(command: list[str]) -> str:
     return " ".join(shlex.quote(part) for part in command)
-
-

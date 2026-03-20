@@ -100,8 +100,20 @@ uv run qhv create demo
 
 If `ssh` resets or disconnects immediately but `127.0.0.1:<port>` still accepts TCP connections, treat that as a guest bootstrap problem, not proof that SSH is configured correctly. Inspect the VM serial log and QEMU stderr log under `.qhv/vms/<name>/`.
 
+Use the built-in serial troubleshooting command first:
+
+```powershell
+uv run qhv console demo
+uv run qhv console demo --dump
+```
+
+`qhv console` prefers a live serial attach for newly started VMs and falls back to the persisted `serial.log` for older VMs.
+
+`qhv ssh` also disables SSH host-key persistence for localhost-forwarded VM sessions, so recreated VMs do not fail on stale `known_hosts` entries.
+
 ## Notes
 
 - `qhv check` is a host readiness check. It does not guarantee that firmware settings such as CPU virtualization are enabled, but failures here should be resolved first.
 - If your environment has group policy or corporate hardening, feature detection may show `unknown` even when the feature is enabled. In that case, verify with the PowerShell commands above.
 - Stale directories under `.qhv/vms/` without a `vm.json` record are invalid leftovers and should be safe to remove once no VM process is still using them.
+- `uv run qhv prune` removes stale directories and dead failed-start VM records while leaving healthy stopped VMs intact.

@@ -17,8 +17,10 @@ class ForwardPort:
 @dataclass(slots=True)
 class VmSpec:
     name: str
+    image_source: str = "cloud"
     distro: str = "ubuntu"
     release: str = "24.04"
+    variant: str = "cloud"
     architecture: str = "x86_64"
     cpus: int = 1
     memory_mb: int = 1024
@@ -94,6 +96,10 @@ class VmRecord:
     seed_dir: Path
     log_path: Path
     pid: int | None = None
+    state: str = "stopped"
+    last_error: str | None = None
+    serial_mode: str | None = "log-only"
+    serial_socket_port: int | None = None
 
     def to_json(self) -> dict[str, object]:
         return {
@@ -108,6 +114,10 @@ class VmRecord:
             "seed_dir": str(self.seed_dir),
             "log_path": str(self.log_path),
             "pid": self.pid,
+            "state": self.state,
+            "last_error": self.last_error,
+            "serial_mode": self.serial_mode,
+            "serial_socket_port": self.serial_socket_port,
         }
 
     @classmethod
@@ -124,4 +134,8 @@ class VmRecord:
             seed_dir=Path(str(payload["seed_dir"])),
             log_path=Path(str(payload["log_path"])),
             pid=payload.get("pid"),
+            state=str(payload.get("state", "stopped")),
+            last_error=str(payload["last_error"]) if payload.get("last_error") is not None else None,
+            serial_mode=str(payload.get("serial_mode", "log-only")) if payload.get("serial_mode") is not None else None,
+            serial_socket_port=int(payload["serial_socket_port"]) if payload.get("serial_socket_port") is not None else None,
         )

@@ -178,6 +178,9 @@ def test_create_and_destroy_lightweight_vm() -> None:
             assert status.exit_code == 0, status.output
             assert "running" in status.output
 
+            console_dump = runner.invoke(app, ["console", VM_NAME, "--state-dir", str(state_dir), "--dump"], catch_exceptions=False)
+            assert console_dump.exit_code == 0, console_dump.output
+
             if not _wait_for_ssh_banner("127.0.0.1", SSH_PORT, BOOT_TIMEOUT_SECONDS):
                 record = store.load_vm(VM_NAME)
                 serial_log = record.log_path.read_text(encoding="utf-8", errors="replace") if record.log_path.exists() else ""
@@ -248,6 +251,9 @@ def test_readme_user_flow_with_default_state_and_key_discovery() -> None:
         show_cmd = runner.invoke(app, ["show-cmd", README_VM_NAME], catch_exceptions=False)
         assert show_cmd.exit_code == 0, show_cmd.output
         assert f"-name {README_VM_NAME}" in show_cmd.output
+
+        console_dump = runner.invoke(app, ["console", README_VM_NAME, "--dump"], catch_exceptions=False)
+        assert console_dump.exit_code == 0, console_dump.output
 
         if not _wait_for_ssh_banner("127.0.0.1", README_SSH_PORT, BOOT_TIMEOUT_SECONDS):
             serial_log = (workspace_dir / ".qhv" / "vms" / README_VM_NAME / "serial.log").read_text(

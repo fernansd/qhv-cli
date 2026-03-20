@@ -1,8 +1,9 @@
+import os
 import subprocess
 from pathlib import Path
 
 from qhv.models import ImageRef, VmRecord, VmSpec
-from qhv.qemu import QemuRunner, parse_port_forward, terminate_pid
+from qhv.qemu import QemuRunner, parse_port_forward, ssh_known_hosts_sink, terminate_pid
 
 
 def _record(tmp_path: Path) -> VmRecord:
@@ -24,6 +25,8 @@ def _record(tmp_path: Path) -> VmRecord:
         disk_path=tmp_path / "demo" / "demo.qcow2",
         seed_dir=tmp_path / "demo" / "seed",
         log_path=tmp_path / "demo" / "serial.log",
+        serial_mode="socket",
+        serial_socket_port=40222,
     )
 
 
@@ -38,6 +41,10 @@ def test_build_command_contains_whpx_qemu64_and_ssh_forward(tmp_path) -> None:
     assert "whpx" in command
     assert "qemu64" in command
     assert any("hostfwd=tcp::2222-:22" in part for part in command)
+    assert "-chardev" in command
+    assert any("socket,id=serial0" in part for part in command)
+    assert any("port=40222" in part for part in command)
+    assert any("logfile=" in part for part in command)
 
 
 def test_build_command_uses_read_only_vvfat_seed_drive(tmp_path) -> None:
@@ -47,6 +54,40 @@ def test_build_command_uses_read_only_vvfat_seed_drive(tmp_path) -> None:
     assert seed_drives
     assert all("file.label=cidata" in part for part in seed_drives)
     assert all("file.floppy=on" in part for part in seed_drives)
+
+
+def test_build_command_supports_legacy_log_only_serial(tmp_path: Path) -> None:
+    record = _record(tmp_path)
+    record.serial_mode = "log-only"
+    record.serial_socket_port = None
+
+    command = QemuRunner(qemu_system="qemu-system-x86_64", qemu_img="qemu-img").build_command(record)
+
+    assert any(part.startswith("file:") for part in command)
+
+
+def test_ssh_command_disables_host_key_persistence() -> None:
+    spec = VmSpec(name="demo", ssh_port=2222)
+
+    command = QemuRunner(qemu_system="qemu-system-x86_64", qemu_img="qemu-img").ssh_command(spec)
+
+    assert command[:9] == [
+        "ssh",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        f"UserKnownHostsFile={ssh_known_hosts_sink()}",
+        "-o",
+        f"GlobalKnownHostsFile={ssh_known_hosts_sink()}",
+        "-o",
+        "LogLevel=ERROR",
+    ]
+    assert command[-3:] == [f"{spec.username}@127.0.0.1", "-p", str(spec.ssh_port)]
+
+
+def test_ssh_known_hosts_sink_matches_platform() -> None:
+    expected = "NUL" if os.name == "nt" else "/dev/null"
+    assert ssh_known_hosts_sink() == expected
 
 
 def test_start_fails_if_qemu_exits_during_startup(tmp_path, monkeypatch) -> None:

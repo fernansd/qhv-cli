@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from qhv.models import VmRecord
+from qhv.qemu import is_pid_running
 
 
 class StateStore:
@@ -36,7 +37,16 @@ class StateStore:
 
     def load_vm(self, name: str) -> VmRecord:
         payload = json.loads(self.vm_record_path(name).read_text(encoding="utf-8"))
-        return VmRecord.from_json(payload)
+        record = VmRecord.from_json(payload)
+        if "state" not in payload:
+            record.state = "running" if is_pid_running(record.pid) else "stopped"
+        if "last_error" not in payload:
+            record.last_error = None
+        if "serial_mode" not in payload:
+            record.serial_mode = "log-only"
+        if "serial_socket_port" not in payload:
+            record.serial_socket_port = None
+        return record
 
     def has_vm(self, name: str) -> bool:
         return self.has_vm_record(name)
@@ -49,6 +59,11 @@ class StateStore:
             for path in self.vms_dir.iterdir()
             if path.is_dir() and (path / "vm.json").exists()
         )
+
+    def list_vm_dirs(self) -> list[Path]:
+        if not self.vms_dir.exists():
+            return []
+        return sorted(path for path in self.vms_dir.iterdir() if path.is_dir())
 
     def delete_vm(self, name: str) -> bool:
         vm_dir = self.vm_dir(name)
